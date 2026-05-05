@@ -1,0 +1,326 @@
+﻿@page "/"
+@rendermode InteractiveWebAssembly
+@using PathfindingVisualizer.Client.Models
+@using PathfindingVisualizer.Client.Algorithms
+
+<PageTitle>Система керування графом</PageTitle>
+
+@if (isDarkMode)
+{
+    <style>
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', sans-serif;
+            transition: 0.4s;
+        }
+
+        .text-adaptive {
+            color: #ffffff !important;
+        }
+
+        .stat-box {
+            border-color: #6c757d !important;
+            background-color: transparent;
+        }
+        /* Тільки порожні клітинки міняють колір! */
+        .node.empty {
+            background-color: #222 !important;
+        }
+
+        .grid-container {
+            background-color: #333 !important;
+            border-color: #444 !important;
+        }
+
+        .node.wall {
+            background-color: #4a5568 !important;
+        }
+    </style>
+}
+else
+{
+    <style>
+        body {
+            background-color: #f8f9fa;
+            color: #212529;
+            font-family: 'Segoe UI', sans-serif;
+            transition: 0.4s;
+        }
+
+        .text-adaptive {
+            color: #212529 !important;
+        }
+
+        .stat-box {
+            border-color: #ced4da !important;
+            background-color: #ffffff;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        /* Тільки порожні клітинки стають білими! */
+        .node.empty {
+            background-color: #ffffff !important;
+        }
+
+        .grid-container {
+            background-color: #dee2e6 !important;
+            border-color: #adb5bd !important;
+        }
+
+        .node.wall {
+            background-color: #495057 !important;
+        }
+    </style>
+}
+
+<div class="@(isExpandedGrid ? "container-fluid px-4" : "container") text-center mt-3">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <button class="btn btn-outline-secondary" style="width: 150px;" @onclick="ToggleFullScreen">
+            @(isExpandedGrid ? "🗗 Звузити" : "🔲 На весь екран")
+        </button>
+
+        @if (!isExpandedGrid)
+        {
+            <div>
+                <h2 class="mb-1 fw-bold text-adaptive">Система керування графом: Пошук шляхів</h2>
+                <p class="text-secondary mb-0">Візуалізація алгоритмів обходу в ширину (BFS) та в глибину (DFS)</p>
+            </div>
+        }
+        else
+        {
+            <h3 class="mb-0 fw-bold text-adaptive">Система керування графом</h3>
+        }
+
+        <button class="btn @(isDarkMode ? "btn-outline-warning" : "btn-outline-dark")" style="width: 150px;" @onclick="() => isDarkMode = !isDarkMode">
+            @(isDarkMode ? "☀️ Світла" : "🌙 Темна")
+        </button>
+    </div>
+
+    <div class="mb-3 d-flex justify-content-center align-items-center">
+        <span class="me-3 fs-5 text-adaptive">Алгоритм:</span>
+        <div class="btn-group me-4" role="group">
+            <button class="btn @(selectedAlgorithm == "BFS" ? "btn-success" : "btn-outline-success")" @onclick='() => selectedAlgorithm = "BFS"'>Хвильовий пошук</button>
+            <button class="btn @(selectedAlgorithm == "DFS" ? "btn-warning" : "btn-outline-warning")" @onclick='() => selectedAlgorithm = "DFS"'>Пошук у глибину</button>
+        </div>
+        <div class="form-check form-switch ms-2 mt-1">
+            <input class="form-check-input" type="checkbox" id="diagonalSwitch" @bind="allowDiagonals" style="cursor: pointer; transform: scale(1.3);">
+            <label class="form-check-label ms-2 mt-1 text-adaptive" for="diagonalSwitch" style="cursor: pointer;">Рух по діагоналі</label>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <button class="btn @(currentMode == DrawMode.Wall ? "btn-primary" : "btn-outline-primary")" @onclick="() => currentMode = DrawMode.Wall">🧱 Стіни</button>
+        <button class="btn @(currentMode == DrawMode.Start ? "btn-info" : "btn-outline-info")" @onclick="() => currentMode = DrawMode.Start">📍 Старт</button>
+        <button class="btn @(currentMode == DrawMode.Finish ? "btn-danger" : "btn-outline-danger")" @onclick="() => currentMode = DrawMode.Finish">🚩 Фініш</button>
+        <button class="btn @(currentMode == DrawMode.Erase ? "btn-secondary" : "btn-outline-secondary") me-4" @onclick="() => currentMode = DrawMode.Erase">🧽 Гумка</button>
+        <button class="btn btn-warning fw-bold text-dark shadow-sm" @onclick="GenerateMaze">🪄 Згенерувати лабіринт</button>
+    </div>
+
+    <div class="d-flex justify-content-center mb-3 text-adaptive">
+        <div class="mx-3 p-1 border rounded stat-box" style="min-width: 140px;">
+            <div class="text-uppercase text-secondary" style="font-size: 0.75rem;">Відвідано вузлів</div>
+            <div class="fs-5 fw-bold text-success">@(visitedCount == 0 ? "---" : visitedCount)</div>
+        </div>
+        <div class="mx-3 p-1 border rounded stat-box" style="min-width: 140px;">
+            <div class="text-uppercase text-secondary" style="font-size: 0.75rem;">Довжина шляху</div>
+            <div class="fs-5 fw-bold text-warning">@(pathLength == 0 ? "---" : pathLength)</div>
+        </div>
+    </div>
+
+    <div class="grid-container" style="grid-template-columns: repeat(@Cols, 25px);" @onmouseleave="StopDragging" @onmouseup="StopDragging" ondragstart="return false;">
+        @for (int row = 0; row < Rows; row++)
+        {
+            for (int col = 0; col < Cols; col++)
+            {
+                var r = row;
+                var c = col;
+                var node = grid[r, c];
+                <div class="node @GetNodeClass(node)"
+                     @onmousedown="() => StartDragging(r, c)"
+                     @onmouseenter="() => DragOver(r, c)">
+                </div>
+            }
+        }
+    </div>
+
+    <div class="mt-3 d-flex justify-content-center align-items-center mb-4 text-adaptive">
+        <label class="me-2">Затримка: @delayMs мс</label>
+        <input type="range" min="1" max="100" @bind="delayMs" class="form-range w-25 me-4" />
+        <button class="btn @(isDarkMode ? "btn-light" : "btn-dark") btn-lg me-2 fw-bold" @onclick="RunAlgorithm">▶ Запустити @selectedAlgorithm</button>
+        <button class="btn btn-outline-danger btn-lg" @onclick="ClearGrid">🔄 Очистити все</button>
+    </div>
+</div>
+
+@code {
+    int Rows = 20; 
+    int Cols = 20;
+    Node[,] grid = default!;
+
+    Node startNode = default!;
+    Node finishNode = default!;
+
+    string selectedAlgorithm = "BFS";
+    int delayMs = 15;
+
+    bool allowDiagonals = false;
+    bool isDarkMode = true;
+    bool isExpandedGrid = false; 
+
+    int visitedCount = 0;
+    int pathLength = 0;
+
+    enum DrawMode { Wall, Start, Finish, Erase }
+    DrawMode currentMode = DrawMode.Wall;
+    bool isDragging = false;
+
+    protected override void OnInitialized()
+    {
+        InitializeGrid();
+    }
+
+    void ToggleFullScreen()
+    {
+        isExpandedGrid = !isExpandedGrid;
+        Rows = isExpandedGrid ? 25 : 20;
+        Cols = isExpandedGrid ? 45 : 20;  
+
+        visitedCount = 0;
+        pathLength = 0;
+        InitializeGrid();
+    }
+
+    void InitializeGrid()
+    {
+        grid = new Node[Rows, Cols]; 
+        for (int r = 0; r < Rows; r++)
+        {
+            for (int c = 0; c < Cols; c++) grid[r, c] = new Node(r, c);
+        }
+
+        startNode = grid[Rows / 2, 3];
+        startNode.Status = NodeStatus.Start;
+
+        finishNode = grid[Rows / 2, Cols - 4];
+        finishNode.Status = NodeStatus.Finish;
+    }
+
+    string GetNodeClass(Node node)
+    {
+        return node.Status switch
+        {
+            NodeStatus.Wall => "wall",
+            NodeStatus.Start => "start",
+            NodeStatus.Finish => "finish",
+            NodeStatus.Visited => "visited",
+            NodeStatus.Path => "path",
+            _ => "empty"
+        };
+    }
+
+    void StartDragging(int r, int c) { isDragging = true; UpdateNode(r, c); }
+    void DragOver(int r, int c) { if (isDragging) UpdateNode(r, c); }
+    void StopDragging() => isDragging = false;
+
+    void UpdateNode(int r, int c)
+    {
+        var node = grid[r, c];
+        if (node.Status == NodeStatus.Start || node.Status == NodeStatus.Finish)
+        {
+            if (currentMode != DrawMode.Start && currentMode != DrawMode.Finish) return;
+        }
+
+        if (currentMode == DrawMode.Wall) node.Status = NodeStatus.Wall;
+        else if (currentMode == DrawMode.Erase) node.Status = NodeStatus.Empty;
+        else if (currentMode == DrawMode.Start)
+        {
+            startNode.Status = NodeStatus.Empty;
+            startNode = node;
+            startNode.Status = NodeStatus.Start;
+        }
+        else if (currentMode == DrawMode.Finish)
+        {
+            finishNode.Status = NodeStatus.Empty;
+            finishNode = node;
+            finishNode.Status = NodeStatus.Finish;
+        }
+
+        StateHasChanged();
+    }
+
+    async Task GenerateMaze()
+    {
+        ClearOnlyLogic();
+
+        var generator = new MazeGenerator();
+        Action updateUI = () => StateHasChanged();
+        await generator.GenerateMazeAsync(grid, startNode, finishNode, updateUI, 5);
+    }
+
+    void ClearOnlyLogic()
+    {
+        visitedCount = 0;
+        pathLength = 0;
+        for (int r = 0; r < Rows; r++)
+        {
+            for (int c = 0; c < Cols; c++)
+            {
+                if (grid[r, c].Status != NodeStatus.Start && grid[r, c].Status != NodeStatus.Finish)
+                {
+                    grid[r, c].Status = NodeStatus.Empty;
+                    grid[r, c].Parent = null;
+                }
+            }
+        }
+        StateHasChanged();
+    }
+
+    async Task RunAlgorithm()
+    {
+        ClearPathOnly();
+        Action updateUI = () => StateHasChanged();
+
+        if (selectedAlgorithm == "BFS")
+        {
+            var solver = new BfsSolver();
+            var result = await solver.SolveAsync(grid, startNode, finishNode, updateUI, delayMs, allowDiagonals);
+            visitedCount = result.visitedNodes;
+
+            if (result.pathFound) pathLength = await solver.DrawPathAsync(finishNode, startNode, updateUI, delayMs);
+        }
+        else if (selectedAlgorithm == "DFS")
+        {
+            var solver = new DfsSolver();
+            var result = await solver.SolveAsync(grid, startNode, finishNode, updateUI, delayMs, allowDiagonals);
+            visitedCount = result.visitedNodes;
+
+            if (result.pathFound) pathLength = await solver.DrawPathAsync(finishNode, startNode, updateUI, delayMs);
+        }
+        StateHasChanged();
+    }
+
+    void ClearPathOnly()
+    {
+        visitedCount = 0;
+        pathLength = 0;
+        for (int r = 0; r < Rows; r++)
+        {
+            for (int c = 0; c < Cols; c++)
+            {
+                if (grid[r, c].Status == NodeStatus.Visited || grid[r, c].Status == NodeStatus.Path)
+                {
+                    grid[r, c].Status = NodeStatus.Empty;
+                    grid[r, c].Parent = null;
+                }
+            }
+        }
+        StateHasChanged();
+    }
+
+    void ClearGrid()
+    {
+        visitedCount = 0;
+        pathLength = 0;
+        InitializeGrid();
+    }
+}
